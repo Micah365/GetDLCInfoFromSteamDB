@@ -1,0 +1,3 @@
+[dlcs]; {dlcName}
+DLC_{dlcId} = 1
+[/dlcs]
