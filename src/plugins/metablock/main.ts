@@ -1,28 +1,26 @@
-import {readFileSync, writeFileSync} from 'node:fs';
-import {join} from 'node:path';
-import {Plugin} from 'vite';
-import metablock from '../../metablock.js';
+import type { Plugin } from 'vite'
+import { readFileSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+import metablock from '../../metablock'
 
 const plugin = (): Plugin => {
-  let outDir: string;
+  let outDirectory = ''
   return {
     name: 'metablock',
     configResolved(config) {
-      outDir = config.build.outDir;
+      outDirectory = config.build.outDir
     },
     writeBundle(_options, bundle) {
       for (const fileName of Object.keys(bundle)) {
         if (fileName.endsWith('.js')) {
-          const filePath = join(outDir, fileName);
-          const data = readFileSync(filePath, {
-            encoding: 'utf8',
-          });
-          const code = `${metablock}\n${data}`;
-          writeFileSync(filePath, code);
+          const filePath = join(outDirectory, fileName)
+          const data = readFileSync(filePath, { encoding: 'utf8' })
+          const code = `${metablock}\n${data}`
+          writeFileSync(filePath, code)
         }
       }
-    },
-  };
-};
+    }
+  }
+}
 
-export default plugin;
+export default plugin

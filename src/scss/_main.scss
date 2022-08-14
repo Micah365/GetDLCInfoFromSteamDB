@@ -1,7 +1,9 @@
-button[data-bs-toggle="modal"] {
-  position: fixed;
-  bottom: 0;
-  right: 0;
+.btn[data-bs-toggle='modal'] {
+  z-index: 99991;
+}
+
+#sake_output {
+  height: 300px;
 }
 
 .modal-backdrop {
@@ -10,23 +12,13 @@ button[data-bs-toggle="modal"] {
 
 .modal {
   z-index: 99993;
-}
 
-.modal-header-logo img {
-  width: 96px;
-  height: 96px;
-}
+  .modal-header-logo {
+    width: 96px;
+    height: 96px;
+  }
 
-.resize-none {
-  resize: none;
-}
-
-.relative {
-  position: relative;
-}
-
-.fixed-to-textarea {
-  position: absolute;
-  bottom: 0;
-  right: 15px;
+  .resize-none {
+    resize: none;
+  }
 }

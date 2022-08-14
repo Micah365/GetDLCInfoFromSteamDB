@@ -1,286 +1,348 @@
-// eslint-disable-next-line unicorn/prefer-node-protocol
-import {Buffer} from 'buffer';
-import $ from 'jquery';
-import mustache from 'mustache';
-import 'bootstrap/js/dist/modal';
-import './scss/styles.scss';
-import {
-  name as packageName,
-  productName as packageProductName,
-  author as packageAuthor,
-  year as packageYear,
-  version as packageVersion,
-} from '../package.json';
-import skData from './data.js';
-import skAuthorIcon from './sak32009.svg';
-import html from './modal.html?raw';
+/* eslint-disable sonarjs/no-duplicate-string */
+import { compile, registerPartial } from 'handlebars'
+import cryptoUtf8 from 'crypto-js/enc-utf8'
+import cryptoBase64 from 'crypto-js/enc-base64'
+import appInfo from '../package.json'
+import { acfGenerator } from './acf/acf-generator'
+import skModalHtml from './templates/modal.hbs?raw'
+import skButtonHtml from './templates/button.hbs?raw'
+import skSteamDBAppHtml from './templates/steamdbapp.hbs?raw'
+import skSteamDBDepotHtml from './templates/steamdbdepot.hbs?raw'
+import skData from './data'
+import skMainIcon from './images/icon.png'
+import skAuthorIcon from './images/sak32009.svg'
+import skStyles from './scss/styles.scss?inline'
+import './instances/jquery'
+import 'bootstrap/js/dist/modal'
 
-// eslint-disable-next-line @typescript-eslint/naming-convention
-const EOL = '\r\n';
-
-function objs2list(p: Record<string, unknown>) {
-  const r = [];
-  for (const k in p) {
-    if (Object.prototype.hasOwnProperty.call(p, k)) {
-      r.push({'@key': k, '@val': p[k]});
-    }
-  }
-
-  return r;
-}
+// NOTE: 21/01/2022 unsafeWindow.wrappedJSObject fix for ViolentMonkey
+const unsafeWindowC = unsafeWindow as unknown as TypeUnsafeWindow
+const unsafejQuery =
+  typeof unsafeWindowC.jQuery === 'undefined' ? unsafeWindowC.wrappedJSObject.jQuery : unsafeWindowC.jQuery
 
 class Sak32009 {
-  public extractedData: ExtractedData = {
+  private extractedData: ExtractedData = {
     appId: '',
     name: '',
     dlcs: {},
-    dlcsUnknowns: {},
+    countAllDlcs: 0,
     countDlcs: 0,
+    dlcsUnknowns: {},
     countDlcsUnknowns: 0,
-    countAll: 0,
-    withDlcsUnknowns: false,
-  };
+    withDlcsUnknowns: false
+  }
 
-  public urls = {
-    steamdbApp: 'https://steamdb.info/app/',
-    steamdbDepot: 'https://steamdb.info/depot/',
-    steamPowered: 'https://store.steampowered.com/app/',
-    epicGames: 'https://www.epicgames.com/store/',
-  };
+  private is: 'steamdbapp' | 'steamdbdepot' | 'steamdbacf' | 'steampowered' | undefined
 
-  public is = {
-    steamdbApp: false,
-    steamdbDepot: false,
-    steamPowered: false,
-    epicGames: false,
-  };
+  public runScript(clear = false) {
+    if (clear) {
+      $('.sak32009').remove()
+    }
 
-  public titleScript = `${packageProductName} v${packageVersion}<br><small>by ${packageAuthor.name} | ${packageYear}</small>`;
+    const href = window.location.href
+    // eslint-disable-next-line compat/compat
+    const queryString = new URL(href).searchParams
 
-  public constructor() {
-    const href = window.location.href;
-    if (href.startsWith(this.urls.steamdbApp)) {
-      this.is.steamdbApp = true;
-      this.steamDbApp();
-    } else if (href.startsWith(this.urls.steamdbDepot)) {
-      this.is.steamdbDepot = true;
-      this.steamDbDepot();
-    } else if (href.startsWith(this.urls.steamPowered)) {
-      this.is.steamPowered = true;
-      this.steamPowered();
-    } else if (/https:\/\/www.epicgames.com\/store\/(.+)\/p\/(.+)/gm.test(href)) {
-      this.is.epicGames = true;
-      this.epicGames();
+    if (/https:\/\/steamdb\.info\/app\/\d+\/dlc\//u.test(href)) {
+      this.is = 'steamdbapp'
+      this.getDataFromSteamDBApp()
+    } else if (/https:\/\/steamdb\.info\/app\/\d+\/depots\//u.test(href)) {
+      const branch = queryString.get('branch')
+      if (branch === 'public') {
+        this.is = 'steamdbacf'
+        this.getDataFromSteamDBForACF()
+      }
+    } else if (/https:\/\/steamdb\.info\/depot\/\d+\//u.test(href)) {
+      const showHashes = queryString.has('show_hashes')
+      if (showHashes) {
+        this.is = 'steamdbdepot'
+        this.getDataFromSteamDBDepot()
+      }
+    } else if (/https:\/\/store\.steampowered\.com\/app\/\d+\/\w+/u.test(href)) {
+      this.is = 'steampowered'
+      this.getDataFromSteamPowered()
     }
   }
 
-  public steamDbApp() {
-    this.extractedData.appId = $('div[data-appid]').attr('data-appid')!;
-    this.extractedData.name = $('h1[itemprop="name"]').text().trim();
+  private getDataFromSteamDBApp() {
+    this.extractedData.appId = $('div[data-appid]').attr('data-appid') as string
+    this.extractedData.name = $('h1[itemprop="name"]').text().trim()
+
     $('#dlc.tab-pane tr.app[data-appid]').each((_index, element) => {
-      const $dom = $(element);
-      const appId = $dom.attr('data-appid');
-      const appName = $dom.find('td:nth-of-type(2)').text().trim();
-      if (typeof appId !== 'undefined') {
-        if ($dom.find('td:nth-of-type(2)').hasClass('muted')) {
-          this.extractedData.dlcsUnknowns[appId] = appName;
-          this.extractedData.countDlcsUnknowns += 1;
-        } else {
-          this.extractedData.dlcs[appId] = appName;
-          this.extractedData.countDlcs += 1;
+      const dom = $(element)
+      const appId = dom.attr('data-appid') as string
+      const appNameSelector = dom.find('td:nth-of-type(2)')
+      const appName = appNameSelector.text().trim()
+
+      if (appNameSelector.hasClass('muted')) {
+        this.extractedData.dlcsUnknowns[appId] = appName
+        this.extractedData.countDlcsUnknowns += 1
+      } else {
+        this.extractedData.dlcs[appId] = appName
+        this.extractedData.countDlcs += 1
+      }
+
+      this.extractedData.countAllDlcs += 1
+    })
+
+    if (this.extractedData.countAllDlcs > 0) {
+      this.setModal()
+    }
+  }
+
+  private getDataFromSteamPowered() {
+    this.extractedData.appId = $('div[data-appid]').attr('data-appid') as string
+    this.extractedData.name = $('div#appHubAppName').text().trim()
+
+    $('a.game_area_dlc_row').each((_index, element) => {
+      const dom = $(element)
+      const appId = dom.attr('data-ds-appid') as string
+      const appName = dom.find('.game_area_dlc_name').text().trim()
+
+      this.extractedData.dlcs[appId] = appName
+      this.extractedData.countDlcs += 1
+      this.extractedData.countAllDlcs += 1
+    })
+
+    if (this.extractedData.countAllDlcs > 0) {
+      this.setModal()
+    }
+  }
+
+  private getDataFromSteamDBDepot() {
+    let output = ''
+    const depotId = $('div[data-depotid]').attr('data-depotid') as string
+
+    const depotData = unsafejQuery('div#files .table.file-tree').DataTable().data()
+
+    $.each(depotData, (_index, values: Record<number, string>) => {
+      const fileName = values[0]
+      const sha1 = values[1]
+      if (sha1 !== 'NULL') {
+        output += `${sha1} *${fileName}\n`
+      }
+    })
+
+    if (output.length > 0) {
+      this.setModal()
+      this.showOutputOnTextarea(`${depotId}.sha1`, output)
+    }
+  }
+
+  private getDataFromSteamDBForACF() {
+    const appId = Number($('div[data-appid]').attr('data-appid') as string)
+    const appName = $('h1[itemprop="name"]').text().trim()
+    const appInstallDirectory = $('#config > table tbody tr td:first-child:contains("installdir")')
+      .closest('tr')
+      .find('td:last-child')
+      .text()
+      .trim()
+    const appBuildId = Number($('#depots > ul.app-json li i:contains("buildid")').closest('li').find('b').text().trim())
+
+    console.log('appId', appId)
+    console.log('appName', appName)
+    console.log('appInstallDirectory', appInstallDirectory)
+    console.log('appBuildId', appBuildId)
+
+    const steamCMDData: SteamCMDApi = {}
+    steamCMDData[appId] = {
+      common: { name: appName },
+      config: { installdir: appInstallDirectory },
+      depots: { branches: { public: { buildid: appBuildId } } }
+    }
+
+    $('#depots > .table-responsive:nth-child(4) > table tbody tr').each((_index, value) => {
+      const $this = $(value)
+      const depotId = Number($this.find('td:nth-child(1) a').text().trim())
+      const depotName = $this.find('td:nth-child(2)').text().trim()
+      const $depotSize = $this.find('td:nth-child(3)').attr('data-sort')
+      const depotSize = typeof $depotSize !== 'undefined' ? Number($depotSize) : 0
+      const depotOs = $this.find('td:nth-child(4)').attr('data-sort')
+      const depotManifestId = $this.find('td:nth-child(5) a').text().trim()
+      const depotExtraInfo = $this.find('td:nth-child(6)').text()
+
+      steamCMDData[appId].depots[depotId] = {
+        name: depotName,
+        maxsize: depotSize
+      }
+
+      if (typeof depotOs !== 'undefined') {
+        steamCMDData[appId].depots[depotId].config = {
+          oslist: depotOs
+        }
+      }
+
+      if (depotManifestId.length > 0) {
+        steamCMDData[appId].depots[depotId].manifests = {
+          public: Number(depotManifestId)
+        }
+      }
+
+      const depotIsDlc = /DLC (?<dlcid>\d+)/u.exec(depotExtraInfo)
+      if (depotIsDlc !== null) {
+        steamCMDData[appId].depots[depotId].dlcappid = Number(depotIsDlc[1])
+      }
+
+      const depotIsSharedInstall = depotExtraInfo.includes('Shared Install')
+      if (depotIsSharedInstall) {
+        const depotFromApp = /Depot from (?<depotid>\d+)/u.exec(depotExtraInfo)
+        if (depotFromApp !== null) {
+          steamCMDData[appId].depots[depotId].sharedinstall = 1
+          steamCMDData[appId].depots[depotId].depotfromapp = Number(depotFromApp[1])
+        }
+      }
+
+      console.log('-------------------------- depotId', depotId)
+      console.log('depotName', depotName)
+      console.log('$depotSize', $depotSize)
+      console.log('depotSize', depotSize)
+      console.log('depotOs', depotOs)
+      console.log('depotManifestId', depotManifestId)
+      console.log('depotExtraInfo', depotExtraInfo)
+      console.log('depotIsDlc', depotIsDlc)
+      console.log('depotIsSharedInstall', depotIsSharedInstall)
+    })
+
+    this.setModal()
+    this.showOutputOnTextarea(`appmanifest_${appId}.acf`, acfGenerator(appId, steamCMDData))
+  }
+
+  private setModal() {
+    GM_addStyle(skStyles)
+    this.setModalPartials()
+    this.setModalContainer()
+    if (this.is !== 'steamdbdepot' && this.is !== 'steamdbacf') {
+      this.setEvents()
+    }
+    this.setModalButton()
+  }
+
+  public setModalPartials() {
+    registerPartial('steamdbapp', skSteamDBAppHtml)
+    registerPartial('steamdbdepot', skSteamDBDepotHtml)
+    registerPartial('steamdbacf', skSteamDBDepotHtml)
+    registerPartial('steampowered', skSteamDBAppHtml)
+  }
+
+  private setModalButton() {
+    const rendered = compile(skButtonHtml)({
+      appInfo,
+      skMainIcon
+    })
+    $(rendered).appendTo(document.body)
+  }
+
+  private setModalContainer() {
+    const rendered = compile(skModalHtml)({
+      isSteamDBApp: this.is === 'steamdbapp',
+      isSteamDBDepot: this.is === 'steamdbdepot',
+      isSteamDBACF: this.is === 'steamdbacf',
+      isSteamPowered: this.is === 'steampowered',
+      extractedData: this.extractedData,
+      appInfo,
+      skAuthorIcon,
+      skData
+    })
+    $(rendered).appendTo(document.body)
+  }
+
+  private showOutputOnTextarea(fileName: string, output: string) {
+    $('.sak32009 a#sake_download').attr({
+      download: fileName,
+      href: this.encodeToDataUri(output)
+    })
+    $('.sak32009 pre#sake_output').html(output).scrollTop(0)
+  }
+
+  private setEvents() {
+    const sakeSelect = '.sak32009 select#sake_select'
+
+    $(document).on('change', sakeSelect, (event) => {
+      event.preventDefault()
+      const selectedOption = $(event.currentTarget).find(':selected').val()
+      if (typeof selectedOption === 'string') {
+        const dataFormatFile = skData[selectedOption].file
+        const fileText = dataFormatFile.text
+        const fileName = this.parse(dataFormatFile.name)
+        let output = this.parse(fileText)
+
+        // NOTE: TWEAK FOR LAST COMMA JSON
+        if (selectedOption === 'greenLuma2020ManagerBlueAmulet') {
+          output = JSON.stringify(JSON.parse(output.replace(/,\]/gu, ']')), undefined, 4)
         }
 
-        this.extractedData.countAll += 1;
+        this.showOutputOnTextarea(fileName, output)
       }
-    });
-    if (this.extractedData.countAll > 0) {
-      this.setModal();
-    }
+    })
+
+    $(sakeSelect).trigger('change')
+
+    $(document).on('change', '.sak32009 input#sake_unknowns', (event) => {
+      this.extractedData.withDlcsUnknowns = $(event.currentTarget).is(':checked')
+      $(sakeSelect).trigger('change')
+    })
   }
 
-  public steamPowered() {
-    this.extractedData.appId = $('div[data-appid]').attr('data-appid')!;
-    this.extractedData.name = $('div#appHubAppName').text().trim();
-    $('a.game_area_dlc_row').each((_index, element) => {
-      const $dom = $(element);
-      const appId = $dom.attr('data-ds-appid');
-      const appName = $dom.find('.game_area_dlc_name').text().trim();
-      if (typeof appId !== 'undefined') {
-        this.extractedData.dlcs[appId] = appName;
-        this.extractedData.countDlcs += 1;
-        this.extractedData.countAll += 1;
-      }
-    });
-    if (this.extractedData.countAll > 0) {
-      this.setModal();
-    }
+  private encodeToDataUri(content: string) {
+    const textStripped = ($('<textarea>').html(content)[0] as HTMLInputElement).value
+    const encodedWord = cryptoUtf8.parse(textStripped)
+    const encoded = cryptoBase64.stringify(encodedWord)
+    return `data:text/plain;charset=utf-8;base64,${encoded}`
   }
 
-  public steamDbDepot() {
-    let content = '';
-    // NOTE: 21/01/2022 unsafeWindow.wrappedJSObject fix for ViolentMonkey
-    const unsafejQuery =
-      typeof unsafeWindow.jQuery === 'undefined'
-        ? unsafeWindow.wrappedJSObject.jQuery
-        : unsafeWindow.jQuery;
-
-    // NOTE: extra check because yes
-    if (typeof unsafejQuery === 'undefined') {
-      $('textarea#sake_textarea').val('ERROR: undefined jQuery');
-      return;
-    }
-
-    const dataTable = unsafejQuery('div#files .table.file-tree')
-      // eslint-disable-next-line new-cap
-      .DataTable()
-      .data();
-    const depotId = $(`div[data-depotid]`).attr('data-depotid')!;
-    $.each(dataTable, (_index, values: string[]) => {
-      const fileName = values[0];
-      const sha1 = values[1];
-      if (this.isValidSha1(sha1)) {
-        content += `${sha1} *${fileName}${EOL}`;
-      }
-    });
-    if (content.length > 0) {
-      this.setModal();
-      $('a#sake_download').attr({
-        href: this.encodeToDataUri(content),
-        download: `${depotId}.sha1`,
-      });
-      $('textarea#sake_textarea').val(content);
-    }
+  private parse(content: string) {
+    let out = content
+    out = out.replace(
+      /\[dlcs(?: (?<fromZero>fromZero))?(?: prefix="(?<prefix>\d*)")?\](?<content>[\s\S]+?)\[\/dlcs\]/gu,
+      (_substring, indexFromZero: string, indexPrefix: string | undefined, contentOne: string) =>
+        this.parseDlcsMatchValue(contentOne, indexFromZero, indexPrefix)
+    )
+    out = out.replace(
+      /\[data\](?<data>[\s\S]*)\[\/data\]/gu,
+      (_substring, contentOne: string) => this.extractedData[contentOne] as string
+    )
+    return out
   }
 
-  public epicGames() {
-    this.setModal();
+  private parseDlcsMatchPrefix(index: string, prefix: number) {
+    return prefix > index.length ? '0'.repeat(prefix - index.length) + index : index
   }
 
-  public setModal() {
-    this.setModalContainer();
-    this.setModalEvents();
-    if (!this.is.epicGames) {
-      this.setCommonEvents();
-      if (!this.is.steamdbDepot) {
-        this.setEvents();
-      }
-    }
+  private parseDlcsMatchValue(content: string, indexFromZero: string | undefined, parameterTwo: string | undefined) {
+    let out = ''
+    let index = typeof indexFromZero === 'undefined' ? 0 : -1
+    const indexPrefix = Number(typeof parameterTwo === 'undefined' ? 0 : parameterTwo)
 
-    this.setModalButton();
-  }
-
-  public setModalButton() {
-    $(
-      `<div class="sak32009">
-  <button type="button" class="btn btn-sake me-2" data-bs-toggle="modal" data-bs-target="#${packageName}">${this.titleScript}</button>
-</div>`,
-    ).appendTo('body');
-  }
-
-  public setModalContainer() {
-    const rendered = mustache.render(html, {
-      packageName,
-      packageProductName,
-      skAuthorIcon,
-      titleScript: this.titleScript,
-      is: this.is,
-      extractedData: this.extractedData,
-      skSelect: objs2list(skData),
-    });
-    $(rendered).appendTo('body');
-  }
-
-  public setModalEvents() {
-    const $modal = document.querySelector('#' + packageName)!;
-    $modal.addEventListener('shown.bs.modal', () => {
-      $('.modal-backdrop').wrap($('<div class="sak32009"></div>'));
-    });
-    $modal.addEventListener('hidden.bs.modal', () => {
-      $('.sak32009:empty').remove();
-    });
-  }
-
-  public setEvents() {
-    $(document).on('click', 'button#sake_convert', (event) => {
-      event.preventDefault();
-      const selected = $(`select#sake_select option:selected`).val();
-      if (typeof selected === 'string') {
-        const dataFormatFile = skData[selected].file;
-        const fileText = dataFormatFile.text;
-        const fileName = this.parse(dataFormatFile.name);
-        const content = this.parse(fileText);
-        $(`textarea#sake_textarea`).html(content).scrollTop(0);
-        $(`a#sake_download`)
-          .attr({
-            href: this.encodeToDataUri(content),
-            download: fileName,
-          })
-          .removeClass('disabled');
-      }
-    });
-    $(document).on('change', 'input#sake_unknowns', (event) => {
-      this.extractedData.withDlcsUnknowns = $(event.currentTarget).is(':checked');
-    });
-  }
-
-  public setCommonEvents() {
-    // Empty
-  }
-
-  public encodeToDataUri(content: string) {
-    const textStripped = ($('<textarea>').html(content).get(0) as HTMLInputElement).value;
-    const wordArray = Buffer.from(textStripped, 'utf8');
-    const base64 = wordArray.toString('base64');
-    return 'data:text/plain;charset=utf-8;base64,' + base64;
-  }
-
-  public isValidSha1(string: string) {
-    return /^[a-fA-F\d]{40}$/gm.test(string);
-  }
-
-  public parse(content: string) {
-    content = content.replace(
-      /\[dlcs(?: (fromZero))?(?: prefix="(.*?)")?]([^[]+)\[\/dlcs]/gm,
-      (_substring, p1: string | undefined, p2: string | undefined, content: string) => {
-        const indexFromZero = typeof p1 !== 'undefined';
-        const indexPrefix = typeof p2 === 'undefined' ? '0' : p2;
-        return this.parseDlcsMatchValue(content, indexFromZero, indexPrefix);
-      },
-    );
-    content = content.replace(/\[data]([^[]+)\[\/data]/gm, (_substring, content: string) => {
-      return (this.extractedData as Record<string, unknown>)[content] as string;
-    });
-    return content;
-  }
-
-  public parseDlcsMatchPrefix(index: string, prefix: string) {
-    const prefixInt = Number(prefix);
-    return prefixInt > index.length ? '0'.repeat(prefixInt - index.length) + index : index;
-  }
-
-  public parseDlcsMatchValue(content: string, indexFromZero: boolean, indexPrefix: string) {
-    let newContent = '';
-    let index = indexFromZero ? -1 : 0;
     const dlcs = this.extractedData.withDlcsUnknowns
       ? {
           ...this.extractedData.dlcs,
-          ...this.extractedData.dlcsUnknowns,
+          ...this.extractedData.dlcsUnknowns
         }
-      : this.extractedData.dlcs;
-    $.each(dlcs, (appid, name) => {
-      index += 1;
-      newContent += content.replace(/{(.*?)}/gm, (_substring, content: string) => {
+      : this.extractedData.dlcs
+    $.each(dlcs, (appId, name) => {
+      index += 1
+      out += content.replace(/\{(?<content>\w+)\}/gu, (_substring, contentOne: string) => {
         const values: Record<string, string> = {
-          dlcId: appid,
-          dlcName: name,
+          dlcId: appId,
           dlcIndex: this.parseDlcsMatchPrefix(index.toString(), indexPrefix),
-        };
-        return values[content];
-      });
-    });
-    return newContent;
+          dlcName: name
+        }
+        return values[contentOne]
+      })
+    })
+    return out
   }
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-const a = new Sak32009();
+$(() => {
+  const script = new Sak32009()
+  let href = window.location.href
+  script.runScript()
+  window.setInterval(() => {
+    const newhref = window.location.href
+    if (href !== newhref) {
+      href = newhref
+      script.runScript(true)
+    }
+  }, 50)
+})

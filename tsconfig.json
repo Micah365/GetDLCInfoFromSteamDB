@@ -1,15 +1,30 @@
 {
   "compilerOptions": {
-    "target": "ESNext",
     "module": "ESNext",
-    "moduleResolution": "node",
-    "forceConsistentCasingInFileNames": true,
+    "target": "ESNext",
+    "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "resolveJsonModule": true,
-    "strict": true,
+    "forceConsistentCasingInFileNames": true,
+    "moduleResolution": "node",
+    "allowUnusedLabels": false,
+    "allowUnreachableCode": false,
+    "exactOptionalPropertyTypes": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitOverride": true,
+    "noImplicitReturns": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "importsNotUsedAsValues": "error",
+    // "noPropertyAccessFromIndexSignature": true,
+    // "noUncheckedIndexedAccess": true,
+    // "checkJs": true,
+
+    // VITE
     "isolatedModules": true,
-    "typeRoots": ["./node_modules/@types", "./types"]
-  },
-  "exclude": ["./node_modules/**/*"]
+    "useDefineForClassFields": true,
+
+    // CUSTOM
+    "resolveJsonModule": true
+  }
 }
